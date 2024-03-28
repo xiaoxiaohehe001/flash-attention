@@ -338,7 +338,6 @@ struct Flash_bwd_kernel_traits : public Base {
                         Layout<Shape <_8, _32>,  // Thread layout, 8 threads per row
                                Stride<_32, _1>>{},
                         Layout<Shape < _1, _1>>{}));  // Val layout, 1 val per store
-
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

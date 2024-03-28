@@ -4,12 +4,15 @@
 
 #pragma once
 
+#if FLASH_ATTN_WITH_TORCH
 #include <ATen/cuda/CUDAContext.h>
+#endif
 
 #include "static_switch.h"
 #include "flash.h"
 #include "flash_bwd_preprocess_kernel.h"
 #include "flash_bwd_kernel.h"
+#include "cuda_utils.h"
 
 // Determine if the architecture supports FLASH and define a macro to handle parameter modifiers
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800

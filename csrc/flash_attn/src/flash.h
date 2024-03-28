@@ -14,6 +14,7 @@
 #endif
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh> // For at::cuda::philox::unpack
+#include "random_utils.h"
 
 constexpr int TOTAL_DIM = 0;
 constexpr int H_DIM = 1;
@@ -72,6 +73,7 @@ struct Flash_fwd_params : public Qkv_params {
     // The scaling factors for the kernel.
     float scale_softmax;
     float scale_softmax_log2;
+    float unscale_softmax;
 
     // array of length b+1 holding starting offset of each sequence.
     int * __restrict__ cu_seqlens_q;
@@ -138,6 +140,12 @@ struct Flash_fwd_params : public Qkv_params {
 
     void * __restrict__ alibi_slopes_ptr;
     index_t alibi_slopes_batch_stride;
+    // The attn mask matrix
+    void * __restrict__ attn_mask_ptr;
+    int mask_head_mod_size;
+    int mask_seq_q_mod_size;
+    void * __restrict__ attn_mask_start_row_indices_ptr;
+    int attn_mask_start_row;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -180,6 +188,7 @@ struct Flash_bwd_params : public Flash_fwd_params {
 
     bool deterministic;
     index_t dq_accum_split_stride;
+    int num_splits;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

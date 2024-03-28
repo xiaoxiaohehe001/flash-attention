@@ -79,11 +79,15 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_first, bool Is_last, bool Seq_parallel=false, typename Params>
 inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const int bidb, const int bidh, const int n_block) {
 
+    const bool Is_sparse_attn_mask = params.attn_mask_start_row_indices_ptr != nullptr;
+    const int attn_mask_start_row = params.attn_mask_start_row;
+
     using Element = typename Kernel_traits::Element;
     using ElementAccum = typename Kernel_traits::ElementAccum;
     using index_t = typename Kernel_traits::index_t;
 
     // Shared memory.
+    // __shared__ int32_t sparse_mask_smem_[Kernel_traits::kBlockN];
     extern __shared__ char smem_[];
 
     // The thread index.
@@ -103,7 +107,6 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     if (Is_local) {
         m_block_max = std::min(m_block_max, cute::ceil_div((n_block + 1) * kBlockN + binfo.actual_seqlen_q - binfo.actual_seqlen_k + params.window_size_left, kBlockM));
     }
-
     const index_t row_offset_q = binfo.q_offset(params.q_batch_stride, params.q_row_stride, bidb)
         + (m_block_max - 1) * kBlockM * params.q_row_stride + bidh * params.q_head_stride;
     const index_t row_offset_k = binfo.k_offset(params.k_batch_stride, params.k_row_stride, bidb)
@@ -124,6 +127,13 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         + (m_block_max - 1) * kBlockM;
     const index_t row_offset_dpsum = (bidb * params.h + bidh) * params.seqlen_q_rounded
         + (m_block_max - 1) * kBlockM;
+
+    const uint64_t row_offset_mask = (uint64_t)((bidb * params.mask_head_mod_size
+        + (bidh % params.mask_head_mod_size)) * params.mask_seq_q_mod_size
+        + ((m_block_max - 1) * kBlockM % params.mask_seq_q_mod_size)) * params.seqlen_k
+        + n_block * kBlockN;
+
+    const index_t row_offset_sparse_mask = (bidb * params.mask_head_mod_size + bidh % params.mask_head_mod_size) * params.seqlen_k + n_block * kBlockN;
 
     Tensor gQ = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.q_ptr) + row_offset_q),
                             Shape<Int<kBlockM>, Int<kHeadDim>>{},
@@ -150,6 +160,11 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
                               Shape<Int<kBlockM>>{}, Stride<_1>{});
     Tensor gdPsum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dsoftmax_sum) + row_offset_dpsum),
                                 Shape<Int<kBlockM>>{}, Stride<_1>{});
+    Tensor gMask = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.attn_mask_ptr) + row_offset_mask),
+                               Shape<Int<kBlockM>, Int<kBlockN>>{},
+                               make_stride(params.seqlen_k, _1{}));
+    Tensor gSparseMask = make_tensor(make_gmem_ptr(reinterpret_cast<int32_t *>(params.attn_mask_start_row_indices_ptr) + row_offset_sparse_mask),
+                               Shape<Int<kBlockN>>{});
 
     Tensor sQ = make_tensor(make_smem_ptr(reinterpret_cast<Element *>(smem_)),
                             typename Kernel_traits::SmemLayoutQdO{});
@@ -173,6 +188,11 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     Tensor sPtNoSwizzle = make_tensor(sP.data(), typename Kernel_traits::SmemLayoutPdStransposedNoSwizzle{});
     // sP and sdQ share the same memory so be careful
     Tensor sdQ = make_tensor(sP.data(), typename Kernel_traits::SmemLayoutdQ{});
+
+
+    // Tensor sSparseMask = make_tensor(make_smem_ptr(reinterpret_cast<int32_t *>(sparse_mask_smem_)), Shape<Int<kBlockN>>{});
+    // Tensor sdPsum = make_tensor(make_smem_ptr(reinterpret_cast<float2 *>((sP.data() + cute::max(size(sP), size(sdQ))).get())),
+    //                             Shape<Int<Kernel_traits::kSmemdPsumCount / 2>>{});
 
     typename Kernel_traits::GmemTiledCopyQKV gmem_tiled_copy_QKV;
     auto gmem_thr_copy_QKV = gmem_tiled_copy_QKV.get_thread_slice(tidx);
@@ -212,6 +232,11 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     // }
 
     typename Kernel_traits::TiledMmaSdP tiled_mma_sdp;
+    auto gmem_thr_copy_P = make_tiled_copy_C_warpcontiguousN<MMA_N_SdP>(typename Kernel_traits::SmemCopyAtomPdS{}, tiled_mma_sdp).get_thread_slice(tidx);
+    Tensor tPgMask = gmem_thr_copy_P.partition_D(gMask);
+    Tensor cMask = make_identity_tensor(shape(gMask));
+    Tensor tPcMask = gmem_thr_copy_P.partition_D(cMask);
+
     auto thr_mma_sdp = tiled_mma_sdp.get_thread_slice(tidx);
     Tensor tSrQ = thr_mma_sdp.partition_fragment_A(sQ);         // (MMA,MMA_N,MMA_K)
     Tensor tSrK = thr_mma_sdp.partition_fragment_B(sK);         // (MMA,MMA_N,MMA_K)
@@ -445,7 +470,6 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
     flash::Dropout dropout(params.rng_state[0], params.rng_state[1], params.p_dropout_in_uint8_t,
                            bidb, bidh, tidx, params.h);
-
     clear(acc_dv);
     clear(acc_dk);
 
@@ -815,7 +839,6 @@ inline __device__ void compute_dq_dk_dv_seqk_parallel(const Params &params) {
     const int bidb = blockIdx.y;
     // The block index for the head.
     const int bidh = blockIdx.z;
-
     // If deterministic, each thread block will do atomicAdd to a different dQ_accum buffer.
     for (int n_block = blockIdx.x; n_block < (params.seqlen_k + Kernel_traits::kBlockN - 1) / Kernel_traits::kBlockN; n_block += gridDim.x) {
         compute_dq_dk_dv_1colblock<Kernel_traits, Is_dropout, Is_causal, Is_local, Has_alibi, Is_even_MN, Is_even_K, false, false, /*Seq_parallel=*/true>(params, bidb, bidh, n_block);

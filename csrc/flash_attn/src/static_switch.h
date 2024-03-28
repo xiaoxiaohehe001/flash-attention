@@ -26,6 +26,8 @@
     }                                           \
   }()
 
+
+
 #ifdef FLASHATTENTION_DISABLE_DROPOUT
   #define DROPOUT_SWITCH(COND, CONST_NAME, ...) \
   [&] {                                         \
@@ -76,6 +78,26 @@
       return __VA_ARGS__();                  \
     }                                        \
   }()
+
+
+#ifdef PADDLE_WITH_ADVANCED
+#define BOOL_SWITCH_ADVANCED(COND, CONST_NAME, ...) \
+  [&] {                                             \
+    if (COND) {                                     \
+      constexpr static bool CONST_NAME = true;      \
+      return __VA_ARGS__();                         \
+    } else {                                        \
+      constexpr static bool CONST_NAME = false;     \
+      return __VA_ARGS__();                         \
+    }                                               \
+  }()
+#else
+#define BOOL_SWITCH_ADVANCED(COND, CONST_NAME, ...) \
+  [&] {                                             \
+    constexpr static bool CONST_NAME = false;       \
+    return __VA_ARGS__();                           \
+  }()
+#endif
 
 #define HEADDIM_SWITCH(HEADDIM, ...)   \
   [&] {                                    \
