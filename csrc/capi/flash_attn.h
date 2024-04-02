@@ -67,7 +67,10 @@ bool flash_attn_varlen_fwd(const void * const q,  // total_q x num_heads x head_
                            uint64_t seed,
                            uint64_t offset,
                            const void * const attn_mask,
-                           const void * const mask_dims);
+                           const void * const mask_dims,
+                           int window_size_left,
+                           int window_size_right
+);
 
 bool flash_attn_bwd(const void * const dout,  // batch_size x seqlen_q x num_heads, x head_size_og
                     const void * const q,   // batch_size x seqlen_q x num_heads x head_size
