@@ -118,7 +118,10 @@ void set_params_fprop(Flash_fwd_params &params,
                       void * attn_mask_start_row_indices = nullptr,
                       const int attn_mask_start_row = 0,
                       int mask_head_mod_size = 0,
-                      int mask_seq_q_mod_size = 0) {
+                      int mask_seq_q_mod_size = 0,
+                      int window_size_left = -1,
+                      int window_size_right = -1,
+                      bool seqlenq_ngroups_swapped=false) {
     // Reset the parameters
     memset(&params, 0, sizeof(params));
 
@@ -193,6 +196,15 @@ void set_params_fprop(Flash_fwd_params &params,
     ASSERT_CHECK(p_dropout < 1.f);
 
     params.is_causal = is_causal;
+
+
+    if (window_size_left < 0 && window_size_right >= 0) { window_size_left = seqlen_k; }
+    if (window_size_left >= 0 && window_size_right < 0) { window_size_right = seqlen_k; }
+    params.window_size_left = window_size_left;
+    params.window_size_right = window_size_right;
+
+    params.is_seqlens_k_cumulative = true;
+
 }
 
 void set_params_dgrad(Flash_bwd_params &params,
@@ -405,7 +417,10 @@ bool flash_attn_varlen_fwd(const void * const q,
                            uint64_t seed,
                            uint64_t offset,
                            const void * const attn_mask,
-                           const int64_t * const mask_dims) {
+                           const int64_t * const mask_dims, 
+                           int window_size_left,
+                           int window_size_right,
+                ) {
     // std::cout << "flash_attn_varlen_fwd capi" << std::endl;
     FLASHATTNLIB_BEGIN_FUNC
     const bool is_dropout = p_dropout > 0.0;
@@ -413,7 +428,9 @@ bool flash_attn_varlen_fwd(const void * const q,
     const int mask_seq_q_mod_size = attn_mask ? mask_dims[2] : 0;
 
     CHECK_FWD_EXECTUABLE(max_seqlen_q, max_seqlen_k)
-    
+    if (window_size_left >= max_seqlen_k) { window_size_left = -1; }
+    if (window_size_right >= max_seqlen_k) { window_size_right = -1; }
+
     Flash_fwd_params params;
     set_params_fprop(params,
                      batch_size,
@@ -438,7 +455,9 @@ bool flash_attn_varlen_fwd(const void * const q,
                      nullptr,
                      -1,
                      mask_head_mod_size,
-                     mask_seq_q_mod_size);
+                     mask_seq_q_mod_size,
+                        window_size_left,
+                     window_size_right);
     
     params.rng_state = static_cast<uint64_t*>(rng_state);
 
