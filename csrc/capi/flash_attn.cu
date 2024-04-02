@@ -419,7 +419,7 @@ bool flash_attn_varlen_fwd(const void * const q,
                            const void * const attn_mask,
                            const int64_t * const mask_dims, 
                            int window_size_left,
-                           int window_size_right,
+                           int window_size_right
                 ) {
     // std::cout << "flash_attn_varlen_fwd capi" << std::endl;
     FLASHATTNLIB_BEGIN_FUNC
