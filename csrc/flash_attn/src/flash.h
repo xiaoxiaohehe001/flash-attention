@@ -7,15 +7,16 @@
 #include <cuda.h>
 #include <vector>
 
-#ifdef OLD_GENERATOR_PATH
-#include <ATen/CUDAGeneratorImpl.h>
+#ifndef FLASH_ATTN_WITH_TORCH
+    #ifdef OLD_GENERATOR_PATH
+        #include <ATen/CUDAGeneratorImpl.h>
+        #else
+        #include <ATen/cuda/CUDAGeneratorImpl.h>
+    #endif
+    #include <ATen/cuda/CUDAGraphsUtils.cuh> // For at::cuda::philox::unpack
 #else
-#include <ATen/cuda/CUDAGeneratorImpl.h>
+    #include "random_utils.h"
 #endif
-
-#include <ATen/cuda/CUDAGraphsUtils.cuh> // For at::cuda::philox::unpack
-#include "random_utils.h"
-
 constexpr int TOTAL_DIM = 0;
 constexpr int H_DIM = 1;
 constexpr int D_DIM = 2;

@@ -23,6 +23,7 @@
 #include <cstring>
 #include <exception>
 #include <string>
+#include <iostream>
 
 #define ASSERT_CHECK(__cond)                             \
       do {                                               \
@@ -281,10 +282,14 @@ void set_params_dgrad(Flash_bwd_params &params,
     params.num_splits = num_splits;
 }
 
-void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream) {
+void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream, bool force_split_kernel=false) {
     FP16_SWITCH(!params.is_bf16, [&] {
-        FWD_HEADDIM_SWITCH(params.d, [&] {
-            run_mha_fwd_<elem_type, kHeadDim>(params, stream);
+        HEADDIM_SWITCH(params.d, [&] {
+            if (params.num_splits <= 1 && !force_split_kernel) {  // If we don't set it num_splits == 0
+                run_mha_fwd_<elem_type, kHeadDim>(params, stream);
+            } else {
+                run_mha_fwd_splitkv_dispatch<elem_type, kHeadDim>(params, stream);
+            }
         });
     });
 }
@@ -401,6 +406,7 @@ bool flash_attn_varlen_fwd(const void * const q,
                            uint64_t offset,
                            const void * const attn_mask,
                            const int64_t * const mask_dims) {
+    // std::cout << "flash_attn_varlen_fwd capi" << std::endl;
     FLASHATTNLIB_BEGIN_FUNC
     const bool is_dropout = p_dropout > 0.0;
     const int mask_head_mod_size = attn_mask ? mask_dims[1] : 0;
@@ -447,25 +453,11 @@ bool flash_attn_varlen_fwd(const void * const q,
     FLASHATTNLIB_END_FUNC
 }
 
-void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream, const bool configure) {
+void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
     FP16_SWITCH(!params.is_bf16, [&] {
-        if (params.d <= 32) {
-            run_mha_bwd_<elem_type, 32>(params, stream, configure);
-        } else if (params.d <= 64) {
-            run_mha_bwd_<elem_type, 64>(params, stream, configure);
-        } else if (params.d <= 96) {
-            run_mha_bwd_<elem_type, 96>(params, stream, configure);
-        } else if (params.d <= 128) {
-            run_mha_bwd_<elem_type, 128>(params, stream, configure);
-        } else if (params.d <= 160) {
-            run_mha_bwd_<elem_type, 160>(params, stream, configure);
-        } else if (params.d <= 192) {
-            run_mha_bwd_<elem_type, 192>(params, stream, configure);
-        } else if (params.d <= 224) {
-          run_mha_bwd_<elem_type, 224>(params, stream, configure);
-        } else if (params.d <= 256) {
-          run_mha_bwd_<elem_type, 256>(params, stream, configure);
-        }
+        HEADDIM_SWITCH(params.d, [&] {
+            run_mha_bwd_<elem_type, kHeadDim>(params, stream);
+        });
     });
 }
 
@@ -560,7 +552,7 @@ bool flash_attn_bwd(const void * const dout,
         cudaMemcpyAsync(params.rng_state, rng_state_data, 2*sizeof(uint64_t), cudaMemcpyHostToDevice, stream);
     }
 
-    launch(params, stream, /*configure=*/false);
+    launch(params, stream);
     
     return true;
     
@@ -656,7 +648,7 @@ bool flash_attn_varlen_bwd(const void * const dout,
         cudaMemcpyAsync(params.rng_state, rng_state_data, 2*sizeof(uint64_t), cudaMemcpyHostToDevice, stream);
     }
 
-    launch(params, stream, /*configure=*/false);
+    launch(params, stream);
     
     return true;
     
