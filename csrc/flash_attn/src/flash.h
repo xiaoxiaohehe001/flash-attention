@@ -80,6 +80,10 @@ struct Flash_fwd_params : public Qkv_params {
     int * __restrict__ cu_seqlens_q;
     int * __restrict__ cu_seqlens_k;
 
+    // If provided, the length of chunked seqlens.
+    int * __restrict__ chunked_seq_lens_q;
+    int * __restrict__ chunked_seq_lens_k;
+
     // If provided, the actual length of each k sequence.
     int * __restrict__ seqused_k;
 
