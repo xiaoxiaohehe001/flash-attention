@@ -72,7 +72,7 @@ const char *flash_attn_error() {
       ASSERT_CHECK(is_sm8x || is_sm90);                                  \
       ASSERT_CHECK(batch_size > 0);                                      \
       ASSERT_CHECK(head_size % 8 == 0);                                  \
-      ASSERT_CHECK(head_size <= 256);                                    \
+      ASSERT_CHECK(head_size <= 576);                                    \
       ASSERT_CHECK(num_heads % num_heads_k == 0);                        \
       if (attn_mask) {                                                   \
           ASSERT_CHECK(mask_dims[0] == batch_size);                      \

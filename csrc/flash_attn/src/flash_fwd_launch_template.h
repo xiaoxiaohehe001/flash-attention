@@ -371,3 +371,30 @@ void run_mha_fwd_hdim256(Flash_fwd_params &params, cudaStream_t stream) {
         });
     });
 }
+
+
+template<typename T>
+void run_mha_fwd_hdim576(Flash_fwd_params &params, cudaStream_t stream) {
+    constexpr static int Headdim = 576;
+    int device;
+    cudaGetDevice(&device);
+    int max_smem_per_sm, max_smem_per_block;
+    cudaError status_ = cudaDeviceGetAttribute(
+        &max_smem_per_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, device);
+    status_ = cudaDeviceGetAttribute(
+        &max_smem_per_block, cudaDevAttrMaxSharedMemoryPerBlockOptin, device);
+    if (status_ != cudaSuccess) {
+      C10_CUDA_CHECK(status_);
+    }
+    // printf("max_smem_per_sm = %d, max_smem_per_block = %d\n", max_smem_per_sm, max_smem_per_block);
+    DROPOUT_SWITCH(params.p_dropout < 1.f, Is_dropout, [&] {
+        BOOL_SWITCH(params.is_causal, Is_causal, [&] {
+            // For A100, we want to run with 128 x 64 (128KB smem).
+            // std::cout<<"###### run flash attention with dim = 576" << std::endl;
+            // std::cout<<"###### ksmem size: " << params.kSmemSize << std::endl;
+            run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 64, 32, 4, false, false, T>, Is_dropout, Is_causal>(params, stream);
+            // 96 KB
+            // run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 32, 8, false, false, T>, Is_dropout, Is_causal>(params, stream);
+        });
+    });
+}
