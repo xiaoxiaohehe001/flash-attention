@@ -123,7 +123,9 @@ void set_params_fprop(Flash_fwd_params &params,
                       int mask_seq_q_mod_size = 0,
                       int window_size_left = -1,
                       int window_size_right = -1,
-                      bool seqlenq_ngroups_swapped=false) {
+                      int sink_token_len = 0,
+                      bool seqlenq_ngroups_swapped = false
+                      ) {
     // Reset the parameters
     memset(&params, 0, sizeof(params));
 
@@ -206,7 +208,7 @@ void set_params_fprop(Flash_fwd_params &params,
     if (window_size_left >= 0 && window_size_right < 0) { window_size_right = seqlen_k; }
     params.window_size_left = window_size_left;
     params.window_size_right = window_size_right;
-
+    params.sink_token_len = sink_token_len;
     params.is_seqlens_k_cumulative = true;
 
 }
@@ -382,7 +384,6 @@ bool flash_attn_fwd(const void * const q,
                      attn_mask_start_row,
                      mask_head_mod_size,
                      mask_seq_q_mod_size);
-
     params.rng_state = static_cast<uint64_t*>(rng_state);
 
     if (is_dropout) {
@@ -430,8 +431,9 @@ bool flash_attn_varlen_fwd(const void * const q,
                            uint64_t offset,
                            const void * const attn_mask,
                            const int64_t * const mask_dims, 
-                           int window_size_left,
-                           int window_size_right
+                           int window_size_left = -1,
+                           int window_size_right = 0, 
+                           int sink_token_len = 0
                 ) {
     // std::cout << "flash_attn_varlen_fwd capi" << std::endl;
     FLASHATTNLIB_BEGIN_FUNC
@@ -470,9 +472,11 @@ bool flash_attn_varlen_fwd(const void * const q,
                      -1,
                      mask_head_mod_size,
                      mask_seq_q_mod_size,
-                        window_size_left,
-                     window_size_right);
-    
+                     window_size_left,
+                     window_size_right,
+                     sink_token_len);
+    // std::cout<<"sink_token_len:"<<sink_token_len<<"params.sink_token_len:"<<params.sink_token_len<<std::endl;
+
     params.rng_state = static_cast<uint64_t*>(rng_state);
 
     if (is_dropout) {

@@ -126,6 +126,9 @@ struct Flash_fwd_params : public Qkv_params {
     // Local window size
     int window_size_left, window_size_right;
 
+
+    // sink token len
+    int sink_token_len;
     // Random state.
     at::PhiloxCudaState philox_args;
 

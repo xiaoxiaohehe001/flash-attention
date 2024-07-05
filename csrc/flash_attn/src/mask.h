@@ -34,6 +34,7 @@ __forceinline__ __device__ void apply_mask(Tensor<Engine, Layout> &tensor, const
     }
 }
 
+
 template <bool HasWSLeft=true, typename Engine, typename Layout>
 __forceinline__ __device__ void apply_mask_local(Tensor<Engine, Layout> &tensor, const int col_idx_offset_,
                                         const int max_seqlen_k, const int row_idx_offset,
@@ -123,7 +124,30 @@ struct Mask {
         , window_size_right(window_size_right)
         , alibi_slope(!Has_alibi ? 0.0 : alibi_slope) {
     };
-
+    template <typename Engine, typename Layout>
+    __forceinline__ __device__ void apply_mask_sink(Tensor<Engine, Layout> &tensor_, const int sink_token_len,
+                                    const int col_idx_offset_ = 0) {
+        // tensor has shape (ncol=(2, MMA_M), nrow=(2, MMA_N))
+        static_assert(Layout::rank == 3, "Only support 2D Tensor");
+        const int lane_id = threadIdx.x % 32;
+        const int col_idx_offset = col_idx_offset_ + (lane_id % 4) * 2;
+        Tensor tensor = make_tensor(tensor_.data(), flash::convert_layout_acc_rowcol(tensor_.layout()));
+        #pragma unroll
+        for (int nj = 0; nj < size<1, 1>(tensor); ++nj) {
+            const int col_idx_base = col_idx_offset + nj * 8;
+            #pragma unroll
+            for (int j = 0; j < size<1, 0>(tensor); ++j) {
+                const int col_idx = col_idx_base + j;
+                if (col_idx >= sink_token_len) {
+                    // Without the "make_coord" we get wrong results
+                    #pragma unroll
+                    for (int mi = 0; mi < size<0>(tensor); ++mi) {
+                        tensor(mi, make_coord(j, nj)) = -INFINITY;
+                    }
+                }
+            }
+        }
+    }
     // Causal_mask: whether this particular iteration needs causal masking
     template <bool Causal_mask=false, bool Is_even_MN=true, typename Engine, typename Layout>
     __forceinline__ __device__ void apply_mask(Tensor<Engine, Layout> &tensor_,
