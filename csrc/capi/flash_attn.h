@@ -209,6 +209,27 @@ bool flash_attn_bwd_with_bias_and_mask(const void *q,              // total_q x 
                                        const int64_t* mask_dims,
                                        const int64_t* bias_dims);
 
+
+
+bool calc_reduced_attn_scores(const void * const q,
+                        const void * const k,
+                        const int32_t * const cu_seqlens_q,
+                        const int32_t * const cu_seqlens_k,
+                        const void * const softmax_lse,
+                        void * const reduced_scores,
+                        void * const softmax_ptr,
+                        const int batch_size,
+                        const int seqlen_q,
+                        const int seqlen_k,
+                        const int num_heads,
+                        const int num_heads_k,
+                        const int head_size,
+                        const float softmax_scale,
+                        const bool return_softmax,
+                        const bool is_bf16,
+                        const int num_splits,
+                        cudaStream_t stream);
+
 void flash_attn_set_error(const char *msg);
 
 const char *flash_attn_error();
