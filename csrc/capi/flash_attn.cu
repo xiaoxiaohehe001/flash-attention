@@ -12,7 +12,7 @@
 #include "src/cuda_utils.h"
 #include "cutlass/bfloat16.h"
 #include "cutlass/half.h"
-
+#include "src/calc_reduced_attn_scores_dispatch/launch_template.h"
 #include <cmath>
 #include <limits>
 
@@ -88,6 +88,12 @@ const char *flash_attn_error() {
           /* FlashAttention backward for head dim > 192 requires A100/A800 or H100/H800 */ \
           ASSERT_CHECK(is_sm80 || is_sm90);                                                \
       }
+
+
+#define CHECK_CALC_REDUCED_SCORES_EXECTUABLE(__seqlen_q, __seqlen_k) \
+      const void * attn_mask = nullptr;                              \
+      const int64_t * mask_dims = nullptr;                           \
+      CHECK_BWD_EXECTUABLE(__seqlen_q, __seqlen_k)
 
 void set_params_fprop(Flash_fwd_params &params,
                       // sizes
@@ -313,6 +319,30 @@ void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream, bool force_split
         });
     });
 }
+
+void run_calc_reduced_attn_scores(reduced_scores::Params &params, cudaStream_t stream) {
+    using namespace reduced_scores;
+    FP16_SWITCH(!params.is_bf16, [&] {
+        if (params.d <= 32) {
+            run_<elem_type, 32>(params, stream);
+        } else if (params.d <= 64) {
+            run_<elem_type, 64>(params, stream);
+        } else if (params.d <= 96) {
+            run_<elem_type, 96>(params, stream);
+        } else if (params.d <= 128) {
+            run_<elem_type, 128>(params, stream);
+        } else if (params.d <= 160) {
+            run_<elem_type, 160>(params, stream);
+        } else if (params.d <= 192) {
+            run_<elem_type, 192>(params, stream);
+        } else if (params.d <= 224) {
+          run_<elem_type, 224>(params, stream);
+        } else if (params.d <= 256) {
+          run_<elem_type, 256>(params, stream);
+        }
+    });
+}
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -693,6 +723,69 @@ bool flash_attn_varlen_bwd(const void * const dout,
     
     FLASHATTNLIB_END_FUNC
 
+}
+
+bool calc_reduced_attn_scores(const void * const q,
+                                const void * const k,
+                                const int32_t * const cu_seqlens_q,
+                                const int32_t * const cu_seqlens_k,
+                                const void * const softmax_lse,
+                                void * const reduced_scores,
+                                void * const softmax_ptr,
+                                const int batch_size,
+                                const int seqlen_q,
+                                const int seqlen_k,
+                                const int num_heads,
+                                const int num_heads_k,
+                                const int head_size,
+                                const float softmax_scale,
+                                const bool return_softmax,
+                                const bool is_bf16,
+                                const int num_splits,
+                                cudaStream_t stream
+                        ) {
+    FLASHATTNLIB_BEGIN_FUNC
+
+    CHECK_CALC_REDUCED_SCORES_EXECTUABLE(seqlen_q, seqlen_k)
+
+    // bool loop = seqlen_k > blocksize_c;
+    // TODO: change later, for now set to true for simplicity
+    const bool loop = true;
+
+    reduced_scores::Params params;
+
+    set_params_fprop(params,
+                     batch_size, seqlen_q, seqlen_k, 0, 0, num_heads, num_heads_k, head_size, 0,
+                     const_cast<void *>(q), 
+                     const_cast<void *>(k),
+                     nullptr, 
+                     const_cast<void *>(reduced_scores),
+                     const_cast<int32_t *>(cu_seqlens_q),
+                     const_cast<int32_t *>(cu_seqlens_k),
+                     nullptr,
+                     nullptr,  
+                     nullptr,
+                     const_cast<void *>(softmax_lse),
+                     /*p_dropout=*/0.0f,
+                     softmax_scale,
+                     /*softmax_unscale=*/0,
+                     /*is_causal=*/false,
+                     is_bf16,
+                     nullptr,
+                     nullptr,
+                     0,
+                     0,
+                     0);
+
+    params.reduced_scores = reduced_scores;
+    params.p_ptr = softmax_ptr;
+    auto launch = &run_calc_reduced_attn_scores;
+
+    launch(params, stream);
+
+    return true;
+
+    FLASHATTNLIB_END_FUNC
 }
 
 bool flash_attn_fwd_with_bias_and_mask(const void *q,              // total_q x num_heads x head_size, total_q := \sum_{i=0}^{b} s_i
